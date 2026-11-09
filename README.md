@@ -3,11 +3,61 @@
 Command line tools to pack/unpack MStar bin firmware
 
 Currently available tools:
+ - **extract.py** - unpack MStar bin firmware and extract file from *.img files to directory
+ - **extract.sh** - unpack MStar bin firmware and mount *.img files to directory
  - **unpack.py** - unpack MStar bin firmware
  - **pack.py** - pack MStar bin firmware
  - **extract_keys.py** - extract AES and RSA-public keys from MBOOT binary
- - **secure_partition.py** - encrypt image and generate signature file
+ - **extract_keys_v2.py** - improved version of extract_keys.py, extracts keys from any file without specifying offset
+ - **secure_partition.py** - encrypt image and generate signature file (Windows only)
+ - **secure_partition_v2.py** - same as latter but works on any OS with Python3 and OpenSSL installed
+  
+## Installing on Windows
 
+On Windows you just need to have Python3  and OpenSSL installed
+
+## Installing on Linux
+
+On Linux you need to have python3, openssl and lzop installed and some binaries in bin/linux folder.
+
+There are binaries compiled for Ubuntu 25.04 x64 in bin/linux folder. 
+You may need to replace them with the ones compiled for your system.
+```
+- tinyZZZ - compressor/decompressor for different formats, to decompress LZ4 and LZMA.
+	$git clone https://github.com/WangXuan95/TinyZZZ.git
+	$cd TinyZZZ
+	$gcc src/*.c -O2 -std=c99 -Wall -o tinyZZZ
+	Replace tinyZZZ binary file in mstar-bin-tool/bin/linux folder with the compiled one.
+	
+- android-simg2img - utilities to work with SPARSE file format.
+	$git clone https://github.com/anestisb/android-simg2img.git
+	$cd android-simg2img
+	$make
+	Replace simg2img, img2simg, simg2simg binaries in mstar-bin-tool/bin/linux folder.
+```	
+
+## unpack MStar bin firmware and extract file from *.img files to directory
+
+```
+Usage: extract.py <firmware> <output folder [default: ./unpacked/]>
+        <firmware> - MStar bin firmware to unpack
+        <output folder> - directory to store unpacked stuff. Default value: ./unpacked/
+```
+
+## Unpack MStar bin firmware files and mount *.img to directory
+
+```
+Usage: extract.sh <firmware> <output folder [default: ./unpacked/]>
+        <firmware> - MStar bin firmware to unpack
+        <output folder> - directory to store unpacked stuff. Default value: ./unpacked/
+```
+
+## Umount directory
+
+```
+Usage: extract.sh umount <output folder [default: ./unpacked/]>
+        <output folder> - directory to store unpacked stuff. Default value: ./unpacked/
+```
 
 ## Unpack MStar bin firmware files
 
@@ -19,6 +69,7 @@ Usage: unpack.py <firmware> <output folder [default: ./unpacked/]>
 
 
 ## Pack MStar bin firmware 
+
 ```
 Usage: pack.py <config file>
 Example: pack.py configs/letv-x355pro-full.ini
@@ -63,15 +114,47 @@ or
 aescrypt2 1 boot.img boot.img.aes keys/AESBootKey
 ```
 
+Alternatively you can encrypt/decrypt files using OpenSSL:
+```
+openssl aes-128-ecb -nopad -e  -K 0007FF4154534D92FC55AA0FFF0110E0 -in <in_file> -out <out_file> - encrypt
+openssl aes-128-ecb -nopad -d  -K 0007FF4154534D92FC55AA0FFF0110E0 -in <in_file> -out <out_file> - decrypt
+
+``` 
+
 ## Encrypt partition and generate signature
 All new MStar builds have SECURE_BOOT option enabled. In that case 
 boot.img and recovery.img is encrypted (AES) and signed with RSA priv keys.
 That script is used to encrypt image and generate sign file. 
-
-To manually encrypt|decrypt image use aescrypt2 tool from bin folder.
-AES key can be extracted from MBOOT with extract_keys.py script.
+Works only on Windows because uses external utilities and the only known versions are Windows executables.
 
 ```
 Usage: secure_partition.py <file to encrypt> <AES key file> <RSA private key file> <RSA public key file> <output encrypted file> <output signature file>
 Example: secure_partition.py ./pack/boot.img ./keys/AESbootKey ./keys/RSAboot_priv.txt ./keys/RSAboot_pub.txt ./pack/boot.img.aes ./pack/bootSign
 ```
+
+New script added - `secure_partition_v2.py`
+It does the same job but doesn't depend on external utilities, uses only OpenSSL functions and therefore can be used on Linux as well.
+Run the script with `-h` argument to see usage info.
+
+## Extract keys from Mstar.Key.Bank structure
+AES keys can be extracted from MBOOT with extract_keys.py script. 
+In many cases you need to locate the offset of Mstar.Key.Bank first. 
+Read the instructions inside `extract_keys.py` file.
+
+If no offset is passed, `extract_keys.py` tries to read the key bank offset from the MBOOT header
+and the key bank size from the secure identity header automatically.
+`extract_keys_v2.py` searches for the keys in any file without specifying an offset at all.
+
+## Credits
+
+This fork collects the best changes from the community forks of [dipcore/mstar-bin-tool](https://github.com/dipcore/mstar-bin-tool):
+
+ - [sha-man-4pda](https://github.com/sha-man-4pda/mstar-bin-tool) - sparse support, CRC_TYPE (XGIMI / PB803), header labels,
+   multi2optee, new formats (LZ4, LZMA, MTK), Linux support, `extract_keys_v2.py`, `secure_partition_v2.py`
+ - [Thedemon007](https://github.com/Thedemon007/mstar-bin-tool) - consolidation of forks, sources of AESCrypt2 and android-simg2img
+ - [poshul](https://github.com/poshul/mstar-bin-tool) - automatic key bank offset/size detection, platform independent CRC packing
+ - [RockBomber](https://github.com/RockBomber/mstar-bin-tool) - Linux support, header label with time, XGIMI H3 config
+ - [kasru](https://github.com/kasru/mstar-bin-tool) - `extract.py` / `extract.sh`
+ - [divx](https://github.com/divx/mstar-bin-tool) - explicit iso-8859-1 encoding fix
+ - [pexcn](https://github.com/pexcn/mstar-bin-tool) - 4-byte CRC fix on 64-bit systems, shebangs, XGIMI Z6X Pro config
+ - [xhuboy](https://github.com/xhuboy/mstar-bin-tool) - idea of numeric ordering of sparse chunks
