@@ -206,6 +206,8 @@ def sparse_split(file, destdir, chunksize):
     subprocess.run(command, stdout=subprocess.DEVNULL)
     # List filenames
     namesList = list(filter(lambda s: s.startswith(name + '_sparse'), os.listdir(destdir)))
+    # os.listdir() order is arbitrary - sort chunks by their numeric suffix
+    namesList.sort(key=lambda s: [int(n) for n in re.findall(r'\d+', s)])
     for name in namesList:
         chunks.append(os.path.join(destdir, name))
     return chunks
