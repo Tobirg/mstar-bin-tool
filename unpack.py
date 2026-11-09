@@ -1,3 +1,5 @@
+# unpack.py v1.5.1
+
 import sys
 import os
 import re
@@ -16,7 +18,7 @@ LZ4_MAGIC = b'\x02\x21\x4C\x18'
 MSTAR_AES_KEY = b'\x00\x07\xFF\x41\x54\x53\x4D\x92\xFC\x55\xAA\x0F\xFF\x01\x10\xE0'
 MSTAR_AES_IV = b'\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00'
 
-print ('mstar-bin-tool by dipcore fork by sha-man-4pda unpack.py v.1.4')
+print ('mstar-bin-tool by dipcore fork by sha-man-4pda unpack.py v.1.5')
 
 # Vars
 headerScript = ""
@@ -63,10 +65,8 @@ if headerScript is not None:
     print ('[i] Mstar script found')
     headerScriptFound = True
 else:
-    # Tryind to decrypt header with Mstar AESupgrade key
-    if utils.check_openssl_cli():
-        # Trying to find script in decrypted header
-        utils.aes_decrypt(header_file, header_file + '.bin', 'ecb', MSTAR_AES_KEY, MSTAR_AES_IV)
+    # Tryind to decrypt header with Mstar AESupgrade key and find the sript in decryped header
+    if utils.aes_decrypt(header_file, header_file + '.bin', 'ecb', MSTAR_AES_KEY):
         headerScript = utils.is_mstar_script(header_file + '.bin', 0, HEADER_SIZE_MTK)
         if headerScript is not None:
             print ('[i] Encrypted Mstar script found')
@@ -74,10 +74,7 @@ else:
             encrypted_ecb = True
         else:
             os.remove(header_file + '.bin')
-    else:
-        print ('[i] Did not find Mstar script in plain data.')
-        print ('[i] To try to decrypt data you need to have OpenSSL installed') 
-        
+
 if not headerScriptFound :
     print ("[i] Failed.")
     print ("[i] Looking for MTK-Mstar header ...")
@@ -97,43 +94,40 @@ if not headerScriptFound :
                 print ('[i] MTK-Mstar script found')
                 headerScriptFound = True
             else:
-                if utils.check_openssl_cli():
-                    # Trying to find script in decrypted header
-                    utils.copyPart(inputFile, header_file + '_mtk', offset, HEADER_SIZE_MTK)
-                    utils.aes_decrypt(header_file + '_mtk', header_file + '_mtk.bin', 'cbc', MSTAR_AES_KEY, MSTAR_AES_IV)
+                # Trying to find script in decrypted header
+                utils.copyPart(inputFile, header_file + '_mtk', offset, HEADER_SIZE_MTK)
+                if utils.aes_decrypt(header_file + '_mtk', header_file + '_mtk.bin', 'cbc', MSTAR_AES_KEY, MSTAR_AES_IV):
                     headerScript = utils.is_mstar_script(header_file + '_mtk.bin', 0, HEADER_SIZE_MTK)
                     if headerScript is not None:
                         print ("[i] Encrypted MTK-Mstar script found")
                         headerScriptFound = True
                         encrypted_cbc = True
+                        os.remove(header_file + '_mtk')
                     else:
                         os.remove(header_file + '_mtk')
                         os.remove(header_file + '_mtk.bin')
-                else:
-                    print ('[i] Did not find MTK-Mstar script in plain data.')
-                    print ('[i] To try to decrypt data you need to have OpenSSL installed')
 
 if not headerScriptFound:
     print ('[i] Failed.')
     print ('[ERROR] Could not find header script!')
     quit()
-   
+
 # Save the script
 print ("[i] Saving header script to " + os.path.join(outputDirectory, "~header_script.sh"))
 with open(os.path.join(outputDirectory, "~header_script.sh"), "w") as f:
     f.write(headerScript)
-     
+
 if DEBUG:
     print (headerScript)
 #   quit()    
-    
+
 if encrypted_ecb :
     # Decrypting data
     print ('[i] Decrypting data, please wait...')
     utils.aes_decrypt(inputFile, inputFile + '.dec', 'ecb', MSTAR_AES_KEY, MSTAR_AES_IV)
     print (f'[i] Decrypted data saved in {inputFile}.dec file.')
     inputFile += '.dec'
-    
+
 if encrypted_cbc :
     # Decrypting data
     print ('[i] Decrypting data, please wait...')
@@ -186,14 +180,14 @@ for line in headerScript.splitlines():
         outputFile = os.path.join(outputDirectory, params["partition_name"] + '.bin')
         utils.copyPart(inputFile, outputFile, int(offset, 16), int(size, 16))
         print (f'[i] Nuttx config: {params["partition_name"]}. \tCopying {size} bytes ({utils.sizeStr(int(size, 16))}) from offset {offset} to {outputFile}')
-        
+
     if re.match("^multi2optee", line):
         line = utils.applyEnv(line, env)
         params = utils.processMulti2optee(line)
         outputFile = os.path.join(outputDirectory, params["partition_name"] + ".bin")
         utils.copyPart(inputFile, outputFile, int(offset, 16), int(size, 16))
         print (f'[i] Partition: {params["partition_name"]}. \tCopying {size} bytes ({utils.sizeStr(int(size, 16))}) from offset {offset} to {outputFile}')
-        
+
     if re.match('^lz4', line):
         if os.path.exists(tempDecompFile):
             os.remove(tempDecompFile)          
@@ -216,7 +210,7 @@ for line in headerScript.splitlines():
         # delete .comp
         os.remove(tempCompFile)
         compressed_block = True
-        
+
         #mscompress7 is LZMA with two bytes 0xBEEF appended to the end of the file
     if re.match("^mscompress7", line):
         if os.path.exists(tempDecompFile):
@@ -235,7 +229,7 @@ for line in headerScript.splitlines():
         # delete .comp
         os.remove(tempCompFile)
         compressed_block = True
-        
+
         #mw - memory write (fill)
         #   Usage:
         #   mw [.b, .w, .l] address value [count]
@@ -258,7 +252,7 @@ for line in headerScript.splitlines():
                     f.write(b'\x00') 
                 print(f'[i]         Filling block with zeros. \t\tSize: {hex(block_size)} ({utils.sizeStr(block_size)})')
                 compressed_block = True
-    
+
     if re.match("^sparse_write", line):
         line = utils.applyEnv(line, env)
         params = utils.processSparseWrite(line)
@@ -290,7 +284,7 @@ for line in headerScript.splitlines():
                 else:                    
                     utils.copyPart(inputFile, outputFile, int(offset, 16), int(size, 16))
                     print (f'[i] Partition: {params["partition_name"]}. \tCopying {size} bytes ({utils.sizeStr(int(size, 16))}) from offset {offset} to {outputFile}')
-                    
+
             if params["action"] == "write.p":
                 outputFile = os.path.join(outputDirectory, params["partition_name"] + ".img")
                 if compressed_block :
@@ -317,7 +311,9 @@ for line in headerScript.splitlines():
                 utils.copyPart(inputFile, tempCompFile, int(offset, 16), int(size, 16))
                 # unpack .comp -> .decomp
                 print ('[i]         Decompressing LZO (Please be patient)...')
-                utils.unlzo(tempCompFile, tempDecompFile)
+                if not utils.unlzo(tempCompFile, tempDecompFile):
+                    print ('[ERROR] Decompression failed')
+                    quit()
                 size = hex(os.path.getsize(tempDecompFile))
                 print (f'[i]         Done. Decompressed size: {size} ({utils.sizeStr(int(size, 16))}).') 
                 # rename .decomp to .img
@@ -337,7 +333,9 @@ for line in headerScript.splitlines():
                 utils.copyPart(inputFile, tempCompFile, int(offset, 16), int(size, 16))
                 # unpack .comp -> .decomp
                 print ('[i]         Decompressing LZO (Please be patient)...')
-                utils.unlzo(tempCompFile, tempDecompFile)
+                if not utils.unlzo(tempCompFile, tempDecompFile):
+                    print ('[ERROR] Decompression failed')
+                    quit()
                 size = hex(os.path.getsize(tempDecompFile))
                 print (f'[i]         Done. Decompressed size: {size} ({utils.sizeStr(int(size, 16))}).') 
                 # append .decomp to .img
@@ -348,18 +346,17 @@ for line in headerScript.splitlines():
 
 if os.path.exists(tempDecompFile):
     os.remove(tempDecompFile)                
-                
+
 for partName in sparseList:
     print (f'[i] Sparse: converting {partName}_sparse.* to {partName}.img. Please wait...')
     sparseFiles = os.path.join(outputDirectory, partName + '_sparse.*')
-    sparseFilesConv = utils.convertInputSparseName(sparseFiles)
+    sparseFiles = sparseFiles.replace("\\", "/")
     outputImgFile = os.path.join(outputDirectory, partName + ".img")
-    utils.sparse_to_img(sparseFilesConv, outputImgFile)
+    utils.sparse_to_img(sparseFiles, outputImgFile)
+    utils.sparse_delete(sparseFiles)
     print ('[i] Done')
-    os.system('del ' + sparseFiles)
 
 if warning_counter != 0 :
     print (f'[i] Finished with {warning_counter} warnings.')
 else:
     print ('[i] Finished.')
-

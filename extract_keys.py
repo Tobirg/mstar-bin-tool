@@ -180,7 +180,7 @@ with open(mboot, 'rb') as file:
 
 if size == 0:
 		print( "[w] couldn't find bank size from the header, defaulting to "+ defSize)
-		size = defSize
+		size = int(defSize, 16)
 
 # Create out directory 
 print ("[i] Create output directory")

@@ -1,3 +1,5 @@
+# utils.py v1.6
+
 import re
 import os
 import shutil
@@ -7,16 +9,19 @@ import math
 import ctypes
 import subprocess
 import zlib
+import glob
 
 B  = 2**00
 KB = 2**10
 MB = 2**20
 GB = 2**30
 
-LZ4_BLOCKSIZE = 8 * MB
+CONTINUE_MODE_ID = b'\x53\x45\x43\x55\x52\x49\x54\x59'      # 'SECURITY'
+INTERLEAVE_MODE_ID = b'\x49\x4E\x54\x45\x52\x4C\x56\x45'    # 'INTERLVE'
+CHUNK_NUMBER = b'\x01\x00\x00\x00'                          # Always equal to 1 for non-interleave mode
+MSTAR_SIGN_SIZE = 0x220
 
 def sizeInt(s):
-
     value = int(s.strip(string.ascii_letters))
     unit = s.strip(string.digits)
     if not unit:
@@ -61,13 +66,11 @@ def createDirectory(dir):
 def splitFile(file, destdir, chunksize):
     (name, ext) = os.path.splitext(os.path.basename(file))
     chunks = []
-
     # Just copy file if its size is less than chunk size
     if os.path.getsize(file) < chunksize or chunksize == 0:
         chunk = os.path.join(destdir, name + ext)
         shutil.copyfile(file, chunk)
         return [chunk]
-
     # Split in chunks and copy
     data = True
     while data:
@@ -77,27 +80,8 @@ def splitFile(file, destdir, chunksize):
             chunks.append(chunk)
             with open(chunk, 'wb') as f2:
                 f2.write(data)  
-
     assert len(chunks) <= 9999          
     return chunks
-    
-def sparse_split(file, destdir, chunksize):
-    (name, ext) = os.path.splitext(os.path.basename(file))
-    chunks = []
-
-    # Just return file if its size is less than chunk size
-    if os.path.getsize(file) < chunksize or chunksize == 0:
-        return [file]
-        
-    # Split to chunks
-    src = os.path.join(destdir, name + ext)
-    dest = os.path.join(destdir, name + "_sparse")
-    os.system('bin\\sparse\\simg2simg.exe' + ' {} {} {}'.format(src, dest, chunksize))
-    namesList = list(filter(lambda s: s.startswith(name + '_sparse'), os.listdir(destdir)))
-    for name in namesList:
-        chunks.append(os.path.join(destdir, name))
-    return chunks
- 
 
 def writeFile(file, data):
     with open(file, 'wb') as f:
@@ -119,7 +103,7 @@ def appendFile(src, dest, bufsize = 16 * MB):
             while data:
                 data = f1.read(bufsize)
                 f2.write(data)
-                
+
 # Append src data to dest file
 # bufsize - chunk size
 def appendData(src, dest):
@@ -135,7 +119,6 @@ def appendData(src, dest):
 def copyPart(src, dest, offset, size, bufsize = 16 * MB, append = False):
     if not os.path.exists(dest):
         append = False
-
     with open(src, 'rb') as f1:
         f1.seek(offset)
         with open(dest, 'ab' if append else 'wb') as f2:
@@ -158,42 +141,89 @@ def loadPart(file, offset, size):
 # file - input file to align
 # base - alignment base
 def alignFile(file, base = 0x1000):
-    result = base - os.path.getsize(file) % base
+    result = (base - os.path.getsize(file) % base) % base
     if result:
         with open(file, 'ab') as f:
             f.write(('\xff' * result).encode(encoding='iso-8859-1'))
-            
+
 # unlz4
 def unlz4(src, dest) :
-    lz4_path = 'bin\\win32\\TinyZZZ.exe' if os.name == 'nt' else 'bin/linux-x86/TinyZZZ'
+    lz4_path = 'bin\\win32\\TinyZZZ.exe' if os.name == 'nt' else 'bin/linux/tinyZZZ'
     lz4 = os.path.abspath(lz4_path)
     command = [lz4, '-d', '--lz4', src, dest]
     subprocess.run(command, stdout=subprocess.DEVNULL)
-    
+
 # unlzma
 def unlzma(src, dest) :
-    lzma_path = 'bin\\win32\\TinyZZZ.exe' if os.name == 'nt' else 'bin/linux-x86/TinyZZZ'
+    lzma_path = 'bin\\win32\\TinyZZZ.exe' if os.name == 'nt' else 'bin/linux/tinyZZZ'
     lzma = os.path.abspath(lzma_path)
     command = [lzma, '-d', '--lzma', src, dest]
     subprocess.run(command, stdout=subprocess.DEVNULL)
 
 # unlzo
-# if NT then use ./bin/lzo.exe
 def unlzo(src, dest):
-	lzop = 'bin\\win32\\lzop.exe' if os.name == 'nt' else 'lzop'
-	os.system(lzop + ' -o {} -d {}'.format(dest, src))
+    if not check_lzop_cli() :
+        print('[!] To decompress LZO you need to install lzop')
+        return False
+    else:
+        lzop = 'bin\\win32\\lzop.exe' if os.name == 'nt' else 'lzop'
+        os.system(lzop + ' -o {} -d {}'.format(dest, src))
+        return True
 
 # lzo
-# if NT then use ./bin/lzo.exe
 def lzo(src, dest):
-    lzop = 'bin\\win32\\lzop.exe' if os.name == 'nt' else 'lzop'
-    os.system(lzop + ' -o {} -1 {}'.format(dest, src))
-    
+    if not check_lzop_cli() :
+        print('[!] To compress LZO you need to install lzop')
+        return False
+    else:
+        lzop = 'bin\\win32\\lzop.exe' if os.name == 'nt' else 'lzop'
+        os.system(lzop + ' -o {} -1 {}'.format(dest, src))
+        return True
+
+# converts sparse.* chunks to .img
 def sparse_to_img (src, dest):
-    os.system('bin\\sparse\\simg2img.exe' + ' {} {}'.format(src, dest))
-    
+    simg2img = 'bin\\win32\\sparse\\simg2img.exe' if os.name == 'nt' else 'bin/linux/simg2img'
+    command = f'"{os.path.abspath(simg2img)}" {src} {dest}'
+    subprocess.run(command, shell=True, stdout=subprocess.DEVNULL)
+
+# converts .img to sparse.* chunks   
 def img_to_sparse (src, dest):
-    os.system('bin\\sparse\\img2simg.exe' + ' {} {}'.format(src, dest))
+    img2simg = 'bin\\win32\\sparse\\img2simg.exe' if os.name == 'nt' else 'bin/linux/img2simg'
+    command = f'"{os.path.abspath(img2simg)}" {src} {dest}'
+    subprocess.run(command, shell=True, stdout=subprocess.DEVNULL)
+    
+def sparse_split(file, destdir, chunksize):
+    (name, ext) = os.path.splitext(os.path.basename(file))
+    chunks = []
+    # Just return file if its size is less than chunk size
+    if os.path.getsize(file) < chunksize or chunksize == 0:
+        return [file]
+    # Split to chunks
+    simg2simg = 'bin\\win32\\sparse\\simg2simg.exe' if os.name == 'nt' else 'bin/linux/simg2simg'
+    src = os.path.join(destdir, name + ext)
+    dest = os.path.join(destdir, name + "_sparse")
+    command = [os.path.abspath(simg2simg), src, dest, str(chunksize)]
+    subprocess.run(command, stdout=subprocess.DEVNULL)
+    # List filenames
+    namesList = list(filter(lambda s: s.startswith(name + '_sparse'), os.listdir(destdir)))
+    for name in namesList:
+        chunks.append(os.path.join(destdir, name))
+    return chunks
+
+# removes sparse.* chunks    
+def sparse_delete (mask):
+    files_to_delete = glob.glob(mask)
+    for file_path in files_to_delete:
+        try:
+            os.remove(file_path)
+        except OSError as e:
+            print(f"[WARNING] Cannot delete file {file_path}: {e}")
+
+# Extract content of *.img file to directory using 7-Zip
+# if NT then use ./bin/win32/7z.exe
+def unpackImg(src, outdir):
+    z7 = 'bin\\win32\\7z.exe' if os.name == 'nt' else '7z'
+    os.system(z7 + ' x -y -o{} {} '.format(outdir, src))
 
 # Calculate crc32
 # file - filename of a file to calculate
@@ -234,27 +264,27 @@ def parceArgs(string):
 def processFilePartLoad(line):
     args = parceArgs(line)
     return {'cmd': args[0], 'addr': args[1], 'sourceFile': args[2], 'offset': args[3], 'size': args[4]}
-    
+
 def processLZ4(line):
     args = parceArgs(line)
     return {'cmd': args[0], 'in_size': args[3], 'out_size': args[5], 'partition_name': 'lz4'}
-    
+
 def processMscompress7(line):
     args = parceArgs(line)
     return {'cmd': args[0], 'in_size': args[4], 'partition_name': 'mscompress7'}
-    
+
 def processMw(line):
     args = parceArgs(line)
     return {'cmd': args[0], 'addr': args[1], 'value': args[2], 'count' : args[3], 'partition_name': 'crc32'}
-    
+
 def processStoreSecureInfo(line):
     args = parceArgs(line)
     return {'cmd': args[0], 'partition_name': args[1], 'addr': args[2]} 
-    
+
 def processStoreNuttxConfig(line):
     args = parceArgs(line)
     return {'cmd': args[0], 'partition_name': args[1], 'addr': args[2]}
-    
+
 def processSparseWrite(line):
     args = parceArgs(line)
     return {'cmd': args[0], 'action': args[1], 'addr': args[2], 'partition_name': args[3], 'size': args[4]}
@@ -297,7 +327,6 @@ def processMmc(line):
             res['empty_skip'] = 0
         return res
 
-
     elif args[1] == 'write.boot' or args[1] == 'write':
         # mmc write[.boot] bootpart addr blk# size [empty_skip:0-disable,1-enable]
         res = {'cmd': args[0], 'action': args[1], 'bootpart': args[2], 'addr': args[3], 'blk#': args[4], 'size': args[5], 'partition_name': 'sboot'}
@@ -329,7 +358,6 @@ def processMmc(line):
     #   print 'Unknown mmc action'
     #   print args
 
-
 # TODO rewrite it
 fileNameCounter = {}
 def generateFileName(outputDirectory, part, ext):
@@ -341,7 +369,7 @@ def generateFileName(outputDirectory, part, ext):
             fileNameCounter[part['partition_name']] = 1
         fileName = os.path.join(outputDirectory, part['partition_name'] + str(fileNameCounter[part['partition_name']]) + ext)
     return fileName
-    
+
 fileExtCounter = {}
 def generateFileNameSparse(outputDirectory, part):
     fileName = os.path.join(outputDirectory, part['partition_name'] + '_sparse.0')
@@ -352,10 +380,6 @@ def generateFileNameSparse(outputDirectory, part):
             fileExtCounter[part['partition_name']] = 1
         fileName = os.path.join(outputDirectory, part['partition_name'] + '_sparse.' + str(fileExtCounter[part['partition_name']]))
     return fileName
-    
-def convertInputSparseName(filename):
-    filename = filename.replace("\\", "/");
-    return filename
 
 def directive(header, dramBufAddr, useHexValuesPrefix):
 
@@ -396,7 +420,7 @@ def directive(header, dramBufAddr, useHexValuesPrefix):
         else:
             header.write('mmc write.p {} {} {} {}\n'.format(memoryOffset, name, size, emptySkip).encode())
 
-    # TODO Add support 
+    # TODO Add support
     # mmc write.p(.continue|.cont) addr partition_name offset size [empty_skip:0-disable,1-enable]
 
     def store_secure_info(name, memoryOffset=dramBufAddr):
@@ -424,21 +448,21 @@ def directive(header, dramBufAddr, useHexValuesPrefix):
             header.write('sparse_write mmc 0x{} {} $(filesize)\n'.format(memoryOffset, name).encode())
         else:
             header.write('sparse_write mmc {} {} $(filesize)\n'.format(memoryOffset, name).encode())
-            
+
     def write_multi2optee(name, memoryOffset=dramBufAddr):
         if (useHexValuesPrefix):
             header.write('multi2optee 0x{} {} $(filesize)\n'.format(memoryOffset, name).encode())
         else:
             header.write('multi2optee {} {} $(filesize)\n'.format(memoryOffset, name).encode())
-                        
-    directive.filepartload = filepartload   
-    directive.create = create   
-    directive.erase_p = erase_p 
-    directive.unlzo = unlzo 
-    directive.unlzo_cont = unlzo_cont   
-    directive.write_p = write_p 
-    directive.store_secure_info = store_secure_info 
-    directive.store_nuttx_config = store_nuttx_config   
+
+    directive.filepartload = filepartload
+    directive.create = create
+    directive.erase_p = erase_p
+    directive.unlzo = unlzo
+    directive.unlzo_cont = unlzo_cont
+    directive.write_p = write_p
+    directive.store_secure_info = store_secure_info
+    directive.store_nuttx_config = store_nuttx_config
     directive.write_boot = write_boot
     directive.sparse_write = sparse_write
     directive.write_multi2optee = write_multi2optee
@@ -455,14 +479,14 @@ def unpackStructure(s, b):
 def writeRSAPublicKey(file, key):
     writeFile(file, 
         str.encode( "N = {}\nE = {}".format(hexString(key.N, ''), hexString(key.E, '')) ))
-    
+
         #Looks for the first unprintable character in data, returns its index
 def find_first_non_printable_index(data) -> int:
     # Allowed bytes: ASCII 32-126 + TAB, LF, CR
     allowed_bytes = set(range(32, 127)) | {9, 10, 13}
     for index, byte in enumerate(data):
         if byte not in allowed_bytes:
-            return index   
+            return index
     return -1
 
         #Looks for var_name in text and returns its value converted to int
@@ -474,41 +498,89 @@ def get_variable_value(text: str, var_name: str) -> int:
         # Converting to int
         return int(match.group(1), 16)
     return None
-    
+
         #Looks for Mstar script at specified offset, returns script
 def is_mstar_script( in_file: str, offset: int, size: int) -> str:
     header = loadPart(in_file, offset, size)
-    # Looking for the end of script simbol ("%") near the script end, 
+    # Looking for the end of script simbol ("%") near the script end,
     # assuming that the script can't be less than 40 symbols
     end_offset = find_first_non_printable_index(header)
     if end_offset > 40:
         end_script = header[end_offset-40:].find('\x25'.encode(encoding='iso-8859-1'))
         if end_script != -1 :
             header_script = header[:end_offset].decode()
-            #copyPart(in_file, os.path.join(outputDirectory, "~header"), 0, HEADER_SIZE)
             return header_script
     return None
-    
+
         # Decrypts in_file data using OpenSSL
         # AES-128-CBC-NoPadding or AES-128-ECB-NoPadding algorithm
-        # Writes decrypted data to out_file
-def aes_decrypt(in_file: str, out_file: str, cbc_ecb: str, aes_key: bytes, iv:bytes):
-    command = 'openssl aes-128-' + cbc_ecb + ' -d  -nopad -K ' + aes_key.hex()
+        # Saves decrypted data to out_file
+def aes_decrypt(in_file: str, out_file: str, cbc_ecb: str, aes_key: bytes, iv = b'\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00'):
+    if not check_openssl_cli():
+        print('[!] To decrypt data you need to install OpenSSL')
+        return False
+    command = 'openssl aes-128-' + cbc_ecb.lower() + ' -d -nopad -K ' + aes_key.hex()
+    if (cbc_ecb == 'cbc') or (cbc_ecb == 'CBC') :
+        command += ' -iv ' + iv.hex()
+    command += ' -in ' + in_file + ' -out ' + out_file
+    os.system(command)
+    return True
+
+        # Encrypts in_file data using OpenSSL
+        # AES-128-CBC-NoPadding or AES-128-ECB-NoPadding algorithm
+        # Saves encrypted data to out_file
+def aes_encrypt(in_file: str, out_file: str, cbc_ecb: str, aes_key: bytes, iv = b'\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00'):
+    if not check_openssl_cli():
+        print('[!] To encrypt data you need to install OpenSSL')
+        return False
+    command = 'openssl aes-128-' + cbc_ecb.lower() + ' -e -nopad -K ' + aes_key.hex()
     if (cbc_ecb == 'cbc') or (cbc_ecb == 'CBC') : 
         command += ' -iv ' + iv.hex()
     command += ' -in ' + in_file + ' -out ' + out_file
-#    print (command)
-    os.system(command)  
+    os.system(command)
+    return True
 
-        # Checks whether OpenSSL is installed
+        #Creates RSA signature of in_files and stores it in out_file
+def RSA_sign(in_file: str, out_file: str, private_key: str):
+    if not check_openssl_cli():
+        print('[!] To create RSA signature you need to install OpenSSL')
+        return False
+    command = 'openssl dgst -sha256 -sign ' + private_key + ' -out ' + out_file + ' ' + in_file
+    os.system(command)
+    return True
+
+        # Checks if OpenSSL is installed
 def check_openssl_cli():
     try:
-        result = subprocess.run(
-            ["openssl", "version"],
-            capture_output=True,
-            text=True,
-            check=True
-        )
+        result = subprocess.run(["openssl", "version"], capture_output=True, text=True, check=True)
         return True
     except (subprocess.CalledProcessError, FileNotFoundError):
         return False
+
+        # Checks if lzop is installed
+def check_lzop_cli():
+    lzop = 'bin\\win32\\lzop.exe' if os.name == 'nt' else 'lzop'
+    try:
+        result = subprocess.run([lzop, "-V"], capture_output=True, text=True, check=True)
+        return True
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        return False
+
+        #Creates Mstar image signature
+def create_img_sign(out_file: str, size: int, signature: str) :
+    with open(out_file, 'wb') as f1:
+        f1.write(CONTINUE_MODE_ID)
+        f1.write(CHUNK_NUMBER)
+        f1.write(size.to_bytes(4, byteorder='little'))
+        with open (signature, 'rb') as f2:
+            data = f2.read()
+        f1.write(data)
+        f1.write(INTERLEAVE_MODE_ID)
+        f1.write(CHUNK_NUMBER)
+        f1.write(size.to_bytes(4, byteorder='little'))
+        f1.write(data)
+    if (os.path.getsize(out_file) != MSTAR_SIGN_SIZE) :
+        print(f'[!] Something went wrong. Generated signature file size: {hex(os.path.getsize(out_file))} bytes')
+        return False
+    else:
+        return True
