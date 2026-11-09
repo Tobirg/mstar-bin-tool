@@ -40,3 +40,7 @@ __pycache__/
 !.gitignore
 !.mailmap
 !.cocciconfig
+
+# Project / output folders
+/pack/
+unpacked*
