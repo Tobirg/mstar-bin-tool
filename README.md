@@ -140,3 +140,21 @@ Run the script with `-h` argument to see usage info.
 AES keys can be extracted from MBOOT with extract_keys.py script. 
 In many cases you need to locate the offset of Mstar.Key.Bank first. 
 Read the instructions inside `extract_keys.py` file.
+
+If no offset is passed, `extract_keys.py` tries to read the key bank offset from the MBOOT header
+and the key bank size from the secure identity header automatically.
+`extract_keys_v2.py` searches for the keys in any file without specifying an offset at all.
+
+## Credits
+
+This fork collects the best changes from the community forks of [dipcore/mstar-bin-tool](https://github.com/dipcore/mstar-bin-tool):
+
+ - [sha-man-4pda](https://github.com/sha-man-4pda/mstar-bin-tool) - sparse support, CRC_TYPE (XGIMI / PB803), header labels,
+   multi2optee, new formats (LZ4, LZMA, MTK), Linux support, `extract_keys_v2.py`, `secure_partition_v2.py`
+ - [Thedemon007](https://github.com/Thedemon007/mstar-bin-tool) - consolidation of forks, sources of AESCrypt2 and android-simg2img
+ - [poshul](https://github.com/poshul/mstar-bin-tool) - automatic key bank offset/size detection, platform independent CRC packing
+ - [RockBomber](https://github.com/RockBomber/mstar-bin-tool) - Linux support, header label with time, XGIMI H3 config
+ - [kasru](https://github.com/kasru/mstar-bin-tool) - `extract.py` / `extract.sh`
+ - [divx](https://github.com/divx/mstar-bin-tool) - explicit iso-8859-1 encoding fix
+ - [pexcn](https://github.com/pexcn/mstar-bin-tool) - 4-byte CRC fix on 64-bit systems, shebangs, XGIMI Z6X Pro config
+ - [xhuboy](https://github.com/xhuboy/mstar-bin-tool) - idea of numeric ordering of sparse chunks
